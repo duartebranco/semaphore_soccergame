@@ -1,0 +1,10 @@
+A - ARRIVING (initial state)
+W - WAITING_TEAM (waiting to form team)
+F - FORMING_TEAM (actively forming team)
+s - WAITING_START_1 (waiting in team 1)
+S - WAITING_START_2 (waiting in team 2)
+p - PLAYING_1 (playing in team 1)
+P - PLAYING_2 (playing in team 2)
+L - LATE (arrived too late)
+R - REFEREEING
+E - ENDING_GAME
