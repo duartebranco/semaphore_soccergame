@@ -330,6 +330,3 @@ static void playUntilEnd (int id, int team)
         exit(EXIT_FAILURE);
     }
 }
-
-
-

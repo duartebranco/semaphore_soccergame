@@ -459,10 +459,7 @@ void arrive(int32_t id) {
         exit(1);
         // UNREACHABLE
     }
-    int128_t v1 = __asm_mulsd(__asm_cvtsi2sd((int64_t)random()), __asm_movsd(0x4069000000000000)); // 0x177e
-    int128_t v2 = __asm_mulsd(__asm_movsd(0x40c3880000000000), v1); // 0x178a
-    int128_t v3 = __asm_movapd(__asm_divsd(v2, __asm_movsd(0x41e0000000000000))); // 0x179a
-    usleep((int32_t)__asm_cvttsd2si(__asm_addsd(__asm_movsd(0x4049000000000000), v3)));
+    usleep((200.0*random())/(RAND_MAX+1.0)+50.0);
 }
 
 // From module:   /home/nuno/Dropbox/Aulas/sop_2425/docs/praticas/tg2/semaphore_soccergame_solv/src/semSharedMemPlayer.c
