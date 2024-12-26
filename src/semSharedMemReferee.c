@@ -207,7 +207,7 @@ static void startGame ()
         exit (EXIT_FAILURE);
     }
 
-    // Signal teams to start playing (10 players per team)
+    // Signal teams to start playing (10 players in total)
     for (int i = 0; i < NUMPLAYERS; i++) {
         if (semUp (semgid, sh->playersWaitReferee) == -1) {                                                        /* leave critical region */
 			perror ("error on the up operation for semaphore access (RF)");
