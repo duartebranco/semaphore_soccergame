@@ -1,0 +1,662 @@
+%!TEX encoding = UTF-8 Unicode
+
+\documentclass[code,math]{relatorio-deti}
+
+\title{Projeto 2: Simulação de jogo de futebol}
+\cadeira{Sistemas Operativos}
+\relatorioAno{2024/2025}
+
+\membro{Duarte Gabriel Castro Branco}{119253}
+
+\usepackage{lmodern}
+\usepackage{lipsum}
+\usepackage{tocloft}
+\usepackage{wasysym}
+
+\begin{document}
+
+\maketitle
+
+\tableofcontents
+\clearpage
+
+%% \begin{listing}[H]
+%% 	\centering
+%% 	\begin{minted}{C}
+%%         int ImageWidth(const Image img) {
+%%           assert(img != NULL);
+%%           return img->width;
+%%         }
+%%     \end{minted}
+%% 	\caption{exemplo código}
+%% 	\label{code}
+%% \end{listing}
+
+\setcounter{page}{1}
+
+%-----NEW-CHAPTER------%
+\chapter{Introdução}
+
+O objetivo deste projeto é simular um jogo de futebol. O jogo é composto por 2 equipas, cada uma com os respetivos 4 jogadores e 1 guarda-redes. Existe também um único árbitro.
+Existem jogadores a mais e cabe-nos a nós dar uso aos semáforos para tratarmos da concorrência e sincronização entre os jogadores, guarda-redes e árbitro.
+
+Para isto, foi-nos pedido que completássemos os módulos:
+
+\begin{itemize}
+    \item \textbf{semSharedMemGoalie}
+    \item \textbf{semSharedMemPlayer}
+    \item \textbf{semSharedMemReferee}
+\end{itemize}
+
+Neste relatório, vou explicar o que foi feito em cada um destes módulos.
+
+%-----NEW-CHAPTER------%
+\chapter{semSharedMemGoalie}
+
+Neste capítulo, vamos detalhar a implementação do módulo \textbf{semSharedMemGoalie}, que é responsável pelas operações realizadas pelo guarda-redes no jogo de futebol simulado. As operações/funções que nos foram pedidas para completar são:
+
+\begin{itemize}
+    \item \textbf{arriving}: O guarda-redes leva algum tempo a chegar e atualiza o seu estado.
+    \item \textbf{goalieConstituteTeam}: O guarda-redes constitui uma equipa, caso seja possível
+    \item \textbf{waitReferee}: O guarda-redes espera pelo árbitro para iniciar o jogo.
+    \item \textbf{playUntilEnd}: O guarda-redes joga até o final do jogo.
+\end{itemize}
+
+%-----NEW-SECTION------%
+\section{Função \textbf{arrive}}
+
+A função \textbf{arrive} é responsável por simular a chegada do guarda-redes ao campo. Ela atualiza o estado do guarda-redes para \textbf{ARRIVING} e salva o estado interno. A função também faz o guarda-redes esperar durante um tempo aleatório antes de prosseguir. É de notar que esta função é necessária para a implementação de todos os outros módulos.
+
+\begin{minted}{c}
+static void arrive(int id)
+{    
+    if (semDown (semgid, sh->mutex) == -1)  {                          
+        perror ("error on the up operation for semaphore access (GL)");
+        exit (EXIT_FAILURE);
+    }
+
+    sh->fSt.st.goalieStat[id] = ARRIVING;
+    saveState(nFic, &sh->fSt);
+
+    if (semUp (semgid, sh->mutex) == -1) {                             
+        perror ("error on the down operation for semaphore access (GL)");
+        exit (EXIT_FAILURE);
+    }
+
+    usleep((200.0*random())/(RAND_MAX+1.0)+60.0);
+}
+\end{minted}
+
+%-----NEW-SECTION------%
+\section{Função \textbf{goalieConstituteTeam}}
+
+A função \textbf{goalieConstituteTeam} verifica se há jogadores suficientes para formar uma equipa. Se houver, o guarda-redes forma a equipa e espera que os jogadores se registem. Caso contrário, o guarda-redes espera até que uma equipa possa ser formada. Existe também o caso em que o guarda-redes chega tarde e não consegue formar a equipa. A função retorna o id da equipa formada, ou 0 se o guarda-redes chegou tarde.
+ 
+Comecei por incrementar o número de guarda-redes que chegaram e que estão livres, isto é necessário para verificar se há jogadores suficientes para formar equipa. Também inicializei uma nova variável booleana - \textit{waiting} - que vai ser necessária mais à frente.
+
+\begin{minted}{c}
+static int goalieConstituteTeam (int id)
+{
+    int ret = 0;
+    // New variable
+    bool waiting = false;
+    
+    if (semDown (semgid, sh->mutex) == -1)  {
+        perror ("error on the up operation for semaphore access (GL)");
+        exit (EXIT_FAILURE);
+    }
+
+    sh->fSt.goaliesArrived++;
+    sh->fSt.goaliesFree++;      
+\end{minted}
+
+Depois trato dos guarda-redes que chegaram atrasados, ou seja, se o número de guarda-redes que chegaram é maior ou igual ao número total de guarda-redes, o estado do guarda-redes é atualizado para \textbf{LATE} e a função retorna 0, indicando que o guarda-redes chegou tarde.
+
+\begin{minted}{c}
+if (sh->fSt.goaliesArrived >= NUMGOALIES) {
+    sh->fSt.st.goalieStat[id] = LATE;
+    saveState(nFic, &sh->fSt);
+    ret = 0;
+\end{minted}
+
+Se há jogadores e guarda-redes suficientes para formar uma equipa, o estado do guarda-redes é atualizado para \textbf{FORMING\_TEAM}. O número de jogadores e guarda-redes livres é decrementado e os jogadores são acordados para se registarem na equipa. Guarda-se o estado interno e incrementa-se o id da equipa. Por fim, o árbitro é avisado de que a equipa está formada.
+
+\begin{minted}{c}
+} else if (sh->fSt.playersFree >= NUMTEAMPLAYERS && 
+           sh->fSt.goaliesFree >= NUMTEAMGOALIES) {
+    sh->fSt.st.goalieStat[id] = FORMING_TEAM;
+    saveState(nFic, &sh->fSt);
+
+    sh->fSt.goaliesFree -= NUMTEAMGOALIES;
+    sh->fSt.playersFree -= NUMTEAMPLAYERS;
+
+    for (int i = 0; i < NUMTEAMPLAYERS; i++) {
+        if (semUp (semgid, sh->playersWaitTeam) == -1) {                                                         
+            perror ("error on the down operation for semaphore access (GL)");
+            exit (EXIT_FAILURE);
+        }    
+
+        if (semDown (semgid, sh->playerRegistered) == -1)  {                                                     
+            perror ("error on the up operation for semaphore access (GL)");
+            exit (EXIT_FAILURE);
+        }
+    }
+
+    ret = sh->fSt.teamId;
+    sh->fSt.teamId++;
+
+    if (semUp (semgid, sh->refereeWaitTeams) == -1) {                                                         
+        perror ("error on the down operation for semaphore access (GL)");
+        exit (EXIT_FAILURE);
+    }      
+\end{minted}
+
+Caso ainda não haja jogadores suficientes para formar a equipa, o estado do guarda-redes é atualizado para \textbf{WAITING\_TEAM} e a variável \textit{waiting} é definida como \textit{true}.
+
+\begin{minted}{c}
+} else {
+    sh->fSt.st.goalieStat[id] = WAITING_TEAM;
+    saveState(nFic, &sh->fSt);
+    waiting = true;
+}
+\end{minted}
+
+Depois destas verificações, a função sai da região crítica (código do professor) e, logo de seguida, verifica-se se a variável \textit{waiting} é \textit{true}. Se for, o guarda-redes espera até que uma equipa possa ser formada. Quando a equipa é formada, o id da equipa é retornado. 
+
+\begin{minted}{c}
+if (waiting) {
+    if (semDown (semgid, sh->goaliesWaitTeam) == -1)  {
+        perror ("error on the up operation for semaphore access (GL)");
+        exit (EXIT_FAILURE);
+    }
+
+    ret = sh->fSt.teamId;
+
+    if (semUp (semgid, sh->playerRegistered) == -1) {
+        perror ("error on the down operation for semaphore access (GL)");
+        exit (EXIT_FAILURE);
+    }
+}
+return ret;
+\end{minted}
+
+
+%-----NEW-SECTION------%
+\section{Função \textbf{waitReferee}}
+
+A função \textbf{waitReferee} faz o guarda-redes esperar pelo árbitro para iniciar o jogo. O estado do guarda-redes é atualizado para \textbf{WAITING\_START} e o estado interno é salvo. Os últimos 2 semáforos são usados para sincronizar o guarda-redes com o árbitro.
+
+\begin{minted}{c}
+static void waitReferee (int id, int team)
+{
+    if (semDown (semgid, sh->mutex) == -1)  {                                                     
+        perror ("error on the up operation for semaphore access (GL)");
+        exit (EXIT_FAILURE);
+    }
+
+    sh->fSt.st.goalieStat[id] = (team == 1) ? WAITING_START_1 : WAITING_START_2;
+    saveState(nFic, &sh->fSt);
+
+    if (semUp (semgid, sh->mutex) == -1) {                                                         
+        perror ("error on the down operation for semaphore access (GL)");
+        exit (EXIT_FAILURE);
+    }
+
+    if (semDown (semgid, sh->playersWaitReferee) == -1)  {                                                     
+        perror ("error on the up operation for semaphore access (GL)");
+        exit (EXIT_FAILURE);
+    }
+
+    if (semUp (semgid, sh->playing) == -1) {                                                         
+        perror ("error on the down operation for semaphore access (GL)");
+        exit (EXIT_FAILURE);
+    }
+}
+\end{minted}
+
+%-----NEW-SECTION------%
+\section{Função \textbf{playUntilEnd}}
+
+A função \textbf{playUntilEnd} faz o guarda-redes jogar até o final do jogo. O estado do guarda-redes é atualizado para \textbf{PLAYING} e o estado interno é salvo. O último semáforo é para esperar pelo fim do jogo.
+
+\begin{minted}{c}
+static void playUntilEnd (int id, int team)
+{
+    if (semDown (semgid, sh->mutex) == -1)  {                                                     
+        perror ("error on the up operation for semaphore access (GL)");
+        exit (EXIT_FAILURE);
+    }
+
+    sh->fSt.st.goalieStat[id] = (team == 1) ? PLAYING_1 : PLAYING_2;
+    saveState(nFic, &sh->fSt);
+
+    if (semUp (semgid, sh->mutex) == -1) {                                                         
+        perror ("error on the down operation for semaphore access (GL)");
+        exit (EXIT_FAILURE);
+    }
+
+    if (semDown (semgid, sh->playersWaitEnd) == -1)  {
+        perror ("error on the up operation for semaphore access (GL)");
+        exit (EXIT_FAILURE);
+    }
+}
+\end{minted}
+
+%-----NEW-CHAPTER------%
+\chapter{semSharedMemPlayer}
+
+Neste capítulo, vamos detalhar a implementação do módulo \textbf{semSharedMemPlayer}, que é responsável pelas operações realizadas pelos jogadores no jogo de futebol simulado. As operações principais incluem:
+
+\begin{itemize}
+    \item \textbf{arrive}: O jogador leva algum tempo a chegar e atualiza seu estado.
+    \item \textbf{playerConstituteTeam}: O jogador constitui uma equipa, caso seja possível
+    \item \textbf{waitReferee}: O jogador espera pelo árbitro para iniciar o jogo.
+    \item \textbf{playUntilEnd}: O jogador joga até o final do jogo.
+\end{itemize}
+
+\section{Função \textbf{arrive}}
+
+A função \textbf{arrive} é responsável por simular a chegada do jogador ao campo. Ela atualiza o estado do jogador para \textbf{ARRIVING} e salva o estado interno, tal como no módulo \textbf{semSharedMemGoalie}.
+
+\begin{minted}{c}
+static void arrive(int id)
+{
+    if (semDown (semgid, sh->mutex) == -1) {                                                     
+        perror ("error on the up operation for semaphore access (PL)");
+        exit (EXIT_FAILURE);
+    }
+
+    sh->fSt.st.playerStat[id] = ARRIVING;
+    saveState(nFic, &sh->fSt);
+
+    if (semUp (semgid, sh->mutex) == -1) {                                                       
+        perror ("error on the up operation for semaphore access (PL)");
+        exit (EXIT_FAILURE);
+    }
+
+    usleep((100.0*random())/(RAND_MAX+1.0)+10.0);
+}
+\end{minted}
+
+\section{Função \textbf{playerConstituteTeam}}
+
+A função \textbf{playerConstituteTeam} verifica se há jogadores suficientes para formar uma equipa. Segue a mesma forma que a função \textbf{goalieConstituteTeam} do módulo anterior, embora com algumas diferenças.
+
+Comecei por incrementar o número de jogadores que chegaram e que estão livres e inicializei uma nova variável, tal como fiz anteriormente.
+
+\begin{minted}{c}
+static int playerConstituteTeam (int id)
+{
+    int ret = 0;
+    // New variable
+    bool waiting = false;
+
+    if (semDown (semgid, sh->mutex) == -1) {
+        perror ("error on the up operation for semaphore access (PL)");
+        exit (EXIT_FAILURE);
+    }
+
+    sh->fSt.playersArrived++;
+    sh->fSt.playersFree++;      
+\end{minted}
+
+Se o número de jogadores que chegaram é maior ou igual ao número total de jogadores possíveis (2 equipas * 4 jogadores = 8), o estado do jogador é atualizado para \textbf{LATE} e a função retorna 0, indicando que o jogador chegou tarde.
+
+\begin{minted}{c}
+if (sh->fSt.playersArrived > (2 * NUMTEAMPLAYERS)) {
+    sh->fSt.st.playerStat[id] = LATE;
+    saveState(nFic, &sh->fSt);
+    ret = 0;
+\end{minted}
+
+Se há jogadores e guarda-redes suficientes para formar uma equipa, o estado do jogador é atualizado para \textbf{FORMING\_TEAM}. O número de jogadores e guarda-redes livres é decrementado e os jogadores são acordados para se registarem na equipa. Os novos semáforos são utilizados para acordar os guarda-redes que estão à espera de formar uma equipa e para esperar que os jogadores confirmem o seu registo na equipa, sendo este processo repetido para todos os jogadores necessários. Guarda-se o estado interno e incrementa-se o id da equipa. Por fim, o árbitro é avisado de que a equipa está formada.
+
+\begin{minted}{c}
+} else if (sh->fSt.playersFree >= NUMTEAMPLAYERS && 
+           sh->fSt.goaliesFree >= NUMTEAMGOALIES) {
+    sh->fSt.st.playerStat[id] = FORMING_TEAM;
+    saveState(nFic, &sh->fSt);
+
+    sh->fSt.playersFree -= NUMTEAMPLAYERS;
+    sh->fSt.goaliesFree -= NUMTEAMGOALIES;
+
+    if (semUp (semgid, sh->goaliesWaitTeam) == -1) {                                                         
+        perror ("error on the down operation for semaphore access (PL)");
+        exit (EXIT_FAILURE);
+    }
+    if (semDown (semgid, sh->playerRegistered) == -1)  {                                                     
+        perror ("error on the up operation for semaphore access (PL)");
+        exit (EXIT_FAILURE);
+    }
+    for (int i = 0; i < (NUMTEAMPLAYERS - 1); i++) {
+        // Wake up players
+        if (semUp (semgid, sh->playersWaitTeam) == -1) {                                                     
+            perror ("error on the down operation for semaphore access (PL)");
+            exit (EXIT_FAILURE);
+        }
+        // Wait for players to acknowledge registration
+        if (semDown (semgid, sh->playerRegistered) == -1)  {                                                 
+            perror ("error on the up operation for semaphore access (PL)");
+            exit (EXIT_FAILURE);
+        }
+    }
+    
+    ret = sh->fSt.teamId;
+    sh->fSt.teamId++;
+
+    if (semUp (semgid, sh->refereeWaitTeams) == -1) {                                                         
+        perror ("error on the down operation for semaphore access (PL)");
+        exit (EXIT_FAILURE);
+    }      
+\end{minted}
+
+Caso ainda não haja jogadores suficientes para formar a equipa, o estado do jogador é atualizado para \textbf{WAITING\_TEAM} e a variável \textit{waiting} é definida como \textit{true}.
+
+\begin{minted}{c}
+} else {
+    sh->fSt.st.playerStat[id] = WAITING_TEAM;
+    saveState(nFic, &sh->fSt);
+    waiting = true;
+}
+\end{minted}
+
+Depois destas verificações, a função sai da região crítica (código do professor) e, logo em seguida, verifica-se se a variável \textit{waiting} é \textit{true}. Se for, o jogador espera até que uma equipa possa ser formada. Quando a equipa é formada, o id da equipa é retornado.
+
+\begin{minted}{c}
+if (waiting) {
+    if (semDown (semgid, sh->playersWaitTeam) == -1) {                                                     
+        perror ("error on the up operation for semaphore access (PL)");
+        exit (EXIT_FAILURE);
+    }
+
+    ret = sh->fSt.teamId;
+
+    if (semUp (semgid, sh->playerRegistered) == -1) {                                                         
+        perror ("error on the down operation for semaphore access (PL)");
+        exit (EXIT_FAILURE);
+    }
+}
+return ret;
+\end{minted}
+
+\section{Função \textbf{waitReferee}}
+
+A função \textbf{waitReferee} faz o jogador esperar pelo árbitro para iniciar o jogo. O estado do jogador é atualizado para \textbf{WAITING\_START} e o estado interno é salvo, pelo que não muda comparativamente com o módulo anterior.
+
+\begin{minted}{c}
+static void waitReferee (int id, int team)
+{
+    if (semDown (semgid, sh->mutex) == -1) {                                                     
+        perror ("error on the up operation for semaphore access (PL)");
+        exit (EXIT_FAILURE);
+    }
+
+    sh->fSt.st.playerStat[id] = (team == 1) ? WAITING_START_1 : WAITING_START_2;
+    saveState(nFic, &sh->fSt);
+
+    if (semUp (semgid, sh->mutex) == -1) {                                                         
+        perror ("error on the down operation for semaphore access (PL)");
+        exit (EXIT_FAILURE);
+    }
+
+    if (semDown (semgid, sh->playersWaitReferee) == -1) {                                                     
+        perror ("error on the up operation for semaphore access (PL)");
+        exit (EXIT_FAILURE);
+    }
+
+    if (semUp (semgid, sh->playing) == -1) {                                                         
+        perror ("error on the down operation for semaphore access (PL)");
+        exit (EXIT_FAILURE);
+    }
+}
+\end{minted}
+
+\section{Função \textbf{playUntilEnd}}
+
+A função \textbf{playUntilEnd} faz o jogador jogar até o final do jogo. O estado do jogador é atualizado para \textbf{PLAYING} e o estado interno é salvo e, tal como a função anterior, mantém-se fiel à implementação anterior.
+
+\begin{minted}{c}
+static void playUntilEnd (int id, int team)
+{
+    if (semDown (semgid, sh->mutex) == -1) {                                                     
+        perror ("error on the up operation for semaphore access (PL)");
+        exit (EXIT_FAILURE);
+    }
+
+    sh->fSt.st.playerStat[id] = (team == 1) ? PLAYING_1 : PLAYING_2;
+    saveState(nFic, &sh->fSt);
+
+    if (semUp (semgid, sh->mutex) == -1) {                                                         
+        perror ("error on the down operation for semaphore access (PL)");
+        exit (EXIT_FAILURE);
+    }
+
+    if (semDown (semgid, sh->playersWaitEnd) == -1) {                                                     
+        perror ("error on the up operation for semaphore access (PL)");
+        exit (EXIT_FAILURE);
+    }
+}
+\end{minted}
+
+%-----NEW-CHAPTER------%
+\chapter{semSharedMemReferee}
+
+Por fim, vou detalhar a implementação do módulo \textbf{semSharedMemReferee}, que é responsável pelas operações realizadas pelo árbitro no jogo de futebol. As operações/funções principais incluem:
+
+\begin{itemize}
+    \item \textbf{arrive}: O árbitro leva algum tempo a chegar e atualiza o seu estado.
+    \item \textbf{waitForTeams}: O árbitro espera que as equipas sejam formadas.
+    \item \textbf{startGame}: O árbitro inicia o jogo.
+    \item \textbf{play}: O árbitro permite que o jogo continue por um tempo.
+    \item \textbf{endGame}: O árbitro termina o jogo.
+\end{itemize}
+
+%-----NEW-SECTION------%
+\section{Função \textbf{arrive}}
+
+A função \textbf{arrive} é responsável por simular a chegada do árbitro ao campo. Ela atualiza o estado do árbitro para \textbf{ARRIVING} e salva o estado interno, pelo que permanece praticamente igual aqui como nos outros módulos. 
+
+\begin{minted}{c}
+static void arrive ()
+{
+    if (semDown (semgid, sh->mutex) == -1) {                                                      /* enter critical region */
+        perror ("error on the up operation for semaphore access (RF)");
+        exit (EXIT_FAILURE);
+    }
+
+    sh->fSt.st.refereeStat = ARRIVING;
+    saveState(nFic , &sh->fSt);
+
+    if (semUp (semgid, sh->mutex) == -1) {                                                        /* leave critical region */
+        perror ("error on the up operation for semaphore access (RF)");
+        exit (EXIT_FAILURE);
+    }
+    
+    usleep((100.0*random())/(RAND_MAX+1.0)+10.0);
+}
+\end{minted}
+
+%-----NEW-SECTION------%
+\section{Função \textbf{waitForTeams}}
+
+A função \textbf{waitForTeams} faz o árbitro esperar até que as duas equipas estejam completamente formadas. O estado do árbitro é atualizado para \textbf{WAITING\_TEAMS} e o estado interno é salvo.
+
+\begin{minted}{c}
+static void waitForTeams ()
+{
+    if (semDown (semgid, sh->mutex) == -1) {                                                      /* enter critical region */
+        perror ("error on the up operation for semaphore access (RF)");
+        exit (EXIT_FAILURE);
+    }
+
+    sh->fSt.st.refereeStat = WAITING_TEAMS;
+    saveState(nFic, &sh->fSt);
+
+    if (semUp (semgid, sh->mutex) == -1) {                                                        /* leave critical region */
+        perror ("error on the up operation for semaphore access (RF)");
+        exit (EXIT_FAILURE);
+    }
+
+    // For each team
+    for (int i = 1; i <= 2; i++) {
+        if (semDown (semgid, sh->refereeWaitTeams) == -1) {
+            perror ("error on the up operation for semaphore access (RF)");
+            exit (EXIT_FAILURE);
+        }
+    }
+}
+\end{minted}
+
+%-----NEW-SECTION------%
+\section{Função \textbf{startGame}}
+
+A função \textbf{startGame} faz o árbitro iniciar o jogo. O estado do árbitro é atualizado para \textbf{STARTING\_GAME} e o estado interno é salvo. Em seguida, o árbitro sinaliza para os jogadores e guarda-redes começarem a jogar.
+
+\begin{minted}{c}
+static void startGame ()
+{
+    if (semDown (semgid, sh->mutex) == -1) {                                                      /* enter critical region */
+        perror ("error on the up operation for semaphore access (RF)");
+        exit (EXIT_FAILURE);
+    }
+
+    sh->fSt.st.refereeStat = STARTING_GAME;
+    saveState(nFic, &sh->fSt);    
+
+    if (semUp (semgid, sh->mutex) == -1) {                                                        /* leave critical region */
+        perror ("error on the up operation for semaphore access (RF)");
+        exit (EXIT_FAILURE);
+    }
+
+    // Signal teams to start playing (10 players including the late ones)
+    for (int i = 0; i < NUMPLAYERS; i++) {
+        if (semUp (semgid, sh->playersWaitReferee) == -1) {
+            perror ("error on the up operation for semaphore access (RF)");
+            exit (EXIT_FAILURE);
+        }
+    }
+
+    for (int i = 0; i < NUMPLAYERS; i++) {
+        if (semDown (semgid, sh->playing) == -1) {
+            perror ("error on the down operation for semaphore access (RF)");
+            exit (EXIT_FAILURE);
+        }
+    }
+}
+\end{minted}
+
+%-----NEW-SECTION------%
+\section{Função \textbf{play}}
+
+A função \textbf{play} faz com que o árbitro permita que o jogo continue por um tempo. O estado do árbitro é atualizado para \textbf{REFEREEING} e o estado interno é salvo. A função também faz o árbitro esperar durante um tempo aleatório antes de prosseguir.
+
+\begin{minted}{c}
+static void play ()
+{
+    if (semDown (semgid, sh->mutex) == -1) {                                                      /* enter critical region */
+        perror ("error on the up operation for semaphore access (RF)");
+        exit (EXIT_FAILURE);
+    }
+
+    sh->fSt.st.refereeStat = REFEREEING;
+    saveState(nFic, &sh->fSt);
+
+    if (semUp (semgid, sh->mutex) == -1) {                                                        /* leave critical region */
+        perror ("error on the up operation for semaphore access (RF)");
+        exit (EXIT_FAILURE);
+    }
+
+    usleep((100.0*random())/(RAND_MAX+1.0)+900.0);
+}
+\end{minted}
+
+%-----NEW-SECTION------%
+\section{Função \textbf{endGame}}
+
+A função \textbf{endGame} faz com que o árbitro termine o jogo. O estado do árbitro é atualizado para \textbf{ENDING\_GAME} e o estado interno é salvo. Em seguida, o árbitro sinaliza para os jogadores e guarda-redes que o jogo terminou.
+
+\begin{minted}{c}
+static void endGame ()
+{
+    if (semDown (semgid, sh->mutex) == -1) {                                                      /* enter critical region */
+        perror ("error on the up operation for semaphore access (RF)");
+        exit (EXIT_FAILURE);
+    }
+    sh->fSt.st.refereeStat = ENDING_GAME;
+    saveState(nFic , &sh->fSt);
+    if (semUp (semgid, sh->mutex) == -1) {                                                        /* leave critical region */
+        perror ("error on the up operation for semaphore access (RF)");
+        exit (EXIT_FAILURE);
+    }
+    // Signal teams that the game has ended
+    for (int i = 0; i < NUMPLAYERS; i++) {
+        if (semUp (semgid, sh->playersWaitEnd) == -1) {
+            perror ("error on the up operation for semaphore access (RF)");
+            exit (EXIT_FAILURE);
+        }
+    }
+}
+\end{minted}
+
+%-----NEW-CHAPTER------%
+\chapter{Testes}
+
+Para testar o projeto, é preciso compilar usando "\textit{make all}" dentro da pasta \textit{src}, depois, vamos para a pasta \textit{run} e podemos correr o programa resultante \textbf{probSemSharedMemSoccerGame}. Existem também mais 2 \textit{scripts} que ajudam nos testes, estes sendo: \textit{filter.sh} e \textit{run.sh}. O \textit{run.sh} permite correr o programa resultante várias vezes, o que ajuda a detetar certos erros e notar o comportamento "comum" do projeto. O \textit{filter.sh} permite uma melhor visualização do programa principal, sinalizando quando há mudanças de estados, sendo este o programa que mais usei no desenvolvimento deste projeto. É de notar que, na etapa de compilação, podemos também testar apenas um dos nossos módulos, usando "\textit{make pl}, \textit{gl} ou \textit{rf}", o que foi importante no desenvolvimento deste projeto.
+
+Executei o \textit{filter.sh} e obtive:
+
+\begin{minted}{c}
+                     SoccerGame - Description of the internal state
+
+ P00  P01  P02  P03  P04  P05  P06  P07  P08  P09   G00  G01  G02   R01 
+   A    A    A    A    A    A    A    A    A    A     A    A    A     A 
+   .    .    .    .    .    .    .    .    .    .     .    .    .     . 
+   .    .    .    .    .    .    .    .    .    .     W    .    .     . 
+   .    .    .    .    .    .    .    .    .    .     .    .    W     . 
+   .    .    .    .    .    .    .    .    .    .     .    L    .     . 
+   .    .    .    .    .    .    .    W    .    .     .    .    .     . 
+   .    W    .    .    .    .    .    .    .    .     .    .    .     . 
+   .    .    .    .    .    W    .    .    .    .     .    .    .     . 
+   .    .    .    .    F    .    .    .    .    .     .    .    .     . 
+   .    .    .    .    .    .    .    .    .    .     .    .    .     . 
+   .    .    .    .    .    .    .    .    .    .     s    .    .     . 
+   .    .    .    .    .    .    .    s    .    .     .    .    .     . 
+   .    s    .    .    .    .    .    .    .    .     .    .    .     . 
+   .    .    .    .    .    s    .    .    .    .     .    .    .     . 
+   .    .    .    .    .    .    .    .    .    W     .    .    .     . 
+   .    .    .    .    s    .    .    .    .    .     .    .    .     . 
+   .    .    .    .    .    .    .    .    W    .     .    .    .     . 
+   .    .    .    W    .    .    .    .    .    .     .    .    .     . 
+   .    .    .    .    .    .    .    .    .    .     .    .    .     . 
+   .    .    .    .    .    .    .    .    .    .     .    .    .     . 
+   .    .    .    .    .    .    F    .    .    .     .    .    .     . 
+   .    .    .    .    .    .    .    .    .    .     .    .    S     . 
+   .    .    .    .    .    .    .    .    .    S     .    .    .     . 
+   .    .    .    .    .    .    .    .    S    .     .    .    .     . 
+   .    .    .    S    .    .    .    .    .    .     .    .    .     . 
+   .    .    .    .    .    .    S    .    .    .     .    .    .     . 
+   .    .    L    .    .    .    .    .    .    .     .    .    .     . 
+   L    .    .    .    .    .    .    .    .    .     .    .    .     . 
+   .    .    .    .    .    .    .    .    .    .     .    .    .     W 
+   .    .    .    .    .    .    .    .    .    .     .    .    .     S 
+   .    .    .    .    .    .    .    p    .    .     .    .    .     . 
+   .    .    .    .    .    .    .    .    .    .     p    .    .     . 
+   .    p    .    .    .    .    .    .    .    .     .    .    .     . 
+   .    .    .    .    .    p    .    .    .    .     .    .    .     . 
+   .    .    .    .    .    .    .    .    .    .     .    .    P     . 
+   .    .    .    .    p    .    .    .    .    .     .    .    .     . 
+   .    .    .    .    .    .    .    .    .    P     .    .    .     . 
+   .    .    .    P    .    .    .    .    .    .     .    .    .     . 
+   .    .    .    .    .    .    .    .    P    .     .    .    .     . 
+   .    .    .    .    .    .    P    .    .    .     .    .    .     . 
+   .    .    .    .    .    .    .    .    .    .     .    .    .     R 
+   .    .    .    .    .    .    .    .    .    .     .    .    .     E 
+\end{minted}
+
+Os resultados obtidos foram os esperados. O goalie1 e os players0 e 2, como chegam em último, não conseguem formar equipa e ficam LATE. A cada 4 jogadores que chegam, começam a formar equipa (F - FORMING\_TEAM) e, assim que a equipa está formada, esperam pelo arbitro para começar o jogo (s - WAITING\_START\_1; S - WAITING\_START\_2). O árbitro chega e espera pelas equipas (W - WAITING\_TEAMS) e a seguir começa o jogo (S - STARTING\_GAME). Os jogadores e guarda-redes jogam (P - PLAYING\_1; P - PLAYING\_2) e o árbitro arbitra (R - REFEREEING). No final, o árbitro termina o jogo (E - ENDING\_GAME).
+
+Também corri o \textit{script} run.sh, que correu o programa \textbf{probSemSharedMemSoccerGame} 1000 vezes. Fiz isto não para ver o resultado de cada iteração do \textit{script}, mas para verificar que o resultado final do projeto permite rodar uma grande quantidade de testes e que não existe a possibilidade de existir um conflito mais raro entre os semáforos que impossibilite o término do \textit{script} - \textit{deadlock}. Felizmente, o \textit{script} concluiu sem qualquer problema. 
+
+Os testes realizados demonstraram que a implementação dos módulos \textbf{semSharedMemGoalie}, \textbf{semSharedMemPlayer} e \textbf{semSharedMemReferee} está correta e funcional. A sincronização baseada em semáforos e memória partilhada foi eficaz na coordenação das ações entre jogadores, guarda-redes e árbitro.
+%-------------------------------------------%
+\end{document}
