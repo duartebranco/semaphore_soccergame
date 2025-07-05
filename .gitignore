@@ -1,0 +1,24 @@
+# Compiled object files
+*.o
+
+# Executables
+run/player
+run/goalie
+run/referee
+run/probSemSharedMemSoccerGame
+
+# Error log files
+run/error_*
+
+# Test log files
+run/test_log.txt
+*.log
+
+# IDE/Editor files
+.vscode/
+*.swp
+*.swo
+*~
+
+# Temporary files
+tmp/
