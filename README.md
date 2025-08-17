@@ -21,7 +21,7 @@ This simulation models a soccer game scenario where:
 ## Project Structure
 
 ```
-├── src/                          # Source code directory
+├── src/                              # Source code directory
 │   ├── probSemSharedMemSoccerGame.c  # Main program (process generator)
 │   ├── semSharedMemPlayer.c          # Player process implementation
 │   ├── semSharedMemGoalie.c          # Goalie process implementation
@@ -33,7 +33,7 @@ This simulation models a soccer game scenario where:
 │   ├── sharedMemory.{c,h}            # Shared memory wrapper functions
 │   ├── logging.{c,h}                 # Logging functionality
 │   ├── Makefile                      # Build configuration
-└── run/                          # Runtime directory
+└── run/                              # Runtime directory
     ├── run.sh                        # Script to run multiple simulations
     ├── clean.sh                      # Cleanup script
     ├── filter.sh                     # Log filtering script
